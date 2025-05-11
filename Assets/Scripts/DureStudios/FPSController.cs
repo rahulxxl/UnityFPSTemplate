@@ -1,17 +1,14 @@
-﻿using UnityEngine;
-#if ENABLE_INPUT_SYSTEM
+using UnityEngine;
 using UnityEngine.InputSystem;
-#endif
+using StarterAssets;
 
-namespace StarterAssets
+namespace DureStudios
 {
 [RequireComponent(typeof(CharacterController))]
-#if ENABLE_INPUT_SYSTEM
 [RequireComponent(typeof(PlayerInput))]
-#endif
-public class FirstPersonController : MonoBehaviour
+public class FPSController : MonoBehaviour
 {
-    [Header("Player")] [Tooltip("Move speed of the character in m/s")]
+   [Header("Player")] [Tooltip("Move speed of the character in m/s")]
     public float MoveSpeed = 4.0f;
 
     [Tooltip("Sprint speed of the character in m/s")]
@@ -71,9 +68,7 @@ public class FirstPersonController : MonoBehaviour
     private float _fallTimeoutDelta;
 
 
-#if ENABLE_INPUT_SYSTEM
     private PlayerInput _playerInput;
-#endif
     private CharacterController _controller;
     private StarterAssetsInputs _input;
     private GameObject _mainCamera;
@@ -82,11 +77,7 @@ public class FirstPersonController : MonoBehaviour
 
     private bool IsCurrentDeviceMouse {
         get {
-#if ENABLE_INPUT_SYSTEM
             return _playerInput.currentControlScheme == "KeyboardMouse";
-#else
-				return false;
-#endif
         }
     }
 

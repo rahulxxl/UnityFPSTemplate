@@ -1,21 +1,22 @@
-﻿using UnityEngine;
-#if ENABLE_INPUT_SYSTEM
+using UnityEngine;
 using UnityEngine.InputSystem;
-#endif
 
-namespace StarterAssets
+namespace DureStudios
 {
 [RequireComponent(typeof(CharacterController))]
-#if ENABLE_INPUT_SYSTEM
 [RequireComponent(typeof(PlayerInput))]
-#endif
-public class FirstPersonController : MonoBehaviour
+public class TempFPSController : MonoBehaviour
 {
     [Header("Player")] [Tooltip("Move speed of the character in m/s")]
     public float MoveSpeed = 4.0f;
 
     [Tooltip("Sprint speed of the character in m/s")]
     public float SprintSpeed = 6.0f;
+
+    [Tooltip("Height of the character when crouched in meters")]
+    public float CrouchHeight = 1.2f;
+
+    public float HeightChangeSpeed = 6f;
 
     [Tooltip("Rotation speed of the character")]
     public float RotationSpeed = 1.0f;
@@ -71,23 +72,22 @@ public class FirstPersonController : MonoBehaviour
     private float _fallTimeoutDelta;
 
 
-#if ENABLE_INPUT_SYSTEM
     private PlayerInput _playerInput;
-#endif
     private CharacterController _controller;
-    private StarterAssetsInputs _input;
+    private PlayerInputController _input;
     private GameObject _mainCamera;
+
+    // Crouch functionality variables
+    private bool _isChangingHeight;
+
+    private float _originalHeight;
+    private bool _prevCrouched = false;
+    private bool _isResettingHeight = false;
 
     private const float _threshold = 0.01f;
 
     private bool IsCurrentDeviceMouse {
-        get {
-#if ENABLE_INPUT_SYSTEM
-            return _playerInput.currentControlScheme == "KeyboardMouse";
-#else
-				return false;
-#endif
-        }
+        get { return _playerInput.currentControlScheme == "KeyboardMouse"; }
     }
 
     private void Awake()
@@ -101,21 +101,19 @@ public class FirstPersonController : MonoBehaviour
     private void Start()
     {
         _controller = GetComponent<CharacterController>();
-        _input = GetComponent<StarterAssetsInputs>();
-#if ENABLE_INPUT_SYSTEM
+        _input = GetComponent<PlayerInputController>();
         _playerInput = GetComponent<PlayerInput>();
-#else
-			Debug.LogError( "Starter Assets package is missing dependencies. Please use Tools/Starter Assets/Reinstall Dependencies to fix it");
-#endif
 
         // reset our timeouts on start
         _jumpTimeoutDelta = JumpTimeout;
         _fallTimeoutDelta = FallTimeout;
+
+        _originalHeight = _controller.height;
     }
 
     private void Update()
     {
-        JumpAndGravity();
+        JumpCrouchAndGravity();
         GroundedCheck();
         Move();
     }
@@ -123,6 +121,84 @@ public class FirstPersonController : MonoBehaviour
     private void LateUpdate()
     {
         CameraRotation();
+    }
+
+    private void JumpCrouchAndGravity()
+    {
+        /*
+        if (_input.crouched) {
+
+            _controller.height = CrouchHeight;
+        }
+        else {
+            _controller.height = _originalHeight;
+        }
+        */
+
+        if (Grounded) {
+            // Does the Crouch state Changed
+            Debug.Log("Grounded");
+            if (_input.crouched != _prevCrouched) {
+                // Change the height
+                _isChangingHeight = true;
+                _prevCrouched = _input.crouched;
+            }
+
+            if (_isChangingHeight)
+                Crouch();
+        }
+        else {
+            Debug.Log("Not Grounded");
+        }
+
+        /*
+        else {
+            if (_input.crouched) {
+                _input.ResetCrouch();
+                _isResettingHeight = true;
+            }
+
+            if (_isResettingHeight)
+                ResetHeight();
+        }
+        */
+
+        if (Grounded) {
+            // reset the fall timeout timer
+            _fallTimeoutDelta = FallTimeout;
+
+            // stop our velocity dropping infinitely when grounded
+            if (_verticalVelocity < 0.0f) {
+                _verticalVelocity = -2f;
+            }
+
+            // Jump
+            if (_input.jump && _jumpTimeoutDelta <= 0.0f) {
+                // the square root of H * -2 * G = how much velocity needed to reach desired height
+                _verticalVelocity = Mathf.Sqrt(JumpHeight * -2f * Gravity);
+            }
+
+            // jump timeout
+            if (_jumpTimeoutDelta >= 0.0f) {
+                _jumpTimeoutDelta -= Time.deltaTime;
+            }
+        }
+        else {
+            // reset the jump timeout timer
+            _jumpTimeoutDelta = JumpTimeout;
+            // fall timeout
+            if (_fallTimeoutDelta >= 0.0f) {
+                _fallTimeoutDelta -= Time.deltaTime;
+            }
+
+            // if we are not grounded, do not jump
+            _input.jump = false;
+        }
+
+        // apply gravity over time if under terminal (multiply by delta time twice to linearly speed up over time)
+        if (_verticalVelocity < _terminalVelocity) {
+            _verticalVelocity += Gravity * Time.deltaTime;
+        }
     }
 
     private void GroundedCheck()
@@ -133,32 +209,17 @@ public class FirstPersonController : MonoBehaviour
         Grounded = Physics.CheckSphere(spherePosition, GroundedRadius, GroundLayers, QueryTriggerInteraction.Ignore);
     }
 
-    private void CameraRotation()
-    {
-        // if there is an input
-        if (_input.look.sqrMagnitude >= _threshold) {
-            //Don't multiply mouse input by Time.deltaTime
-            float deltaTimeMultiplier = IsCurrentDeviceMouse ? 1.0f : Time.deltaTime;
-
-            _cinemachineTargetPitch += _input.look.y * RotationSpeed * deltaTimeMultiplier;
-            _rotationVelocity = _input.look.x * RotationSpeed * deltaTimeMultiplier;
-
-            // clamp our pitch rotation
-            _cinemachineTargetPitch = ClampAngle(_cinemachineTargetPitch, BottomClamp, TopClamp);
-
-            // Update Cinemachine camera target pitch
-            CinemachineCameraTarget.transform.localRotation = Quaternion.Euler(_cinemachineTargetPitch, 0.0f, 0.0f);
-
-            // rotate the player left and right
-            transform.Rotate(Vector3.up * _rotationVelocity);
-        }
-    }
-
     private void Move()
     {
         // set target speed based on move speed, sprint speed and if sprint is pressed
         float targetSpeed = _input.sprint ? SprintSpeed : MoveSpeed;
 
+        // Check when the player toggled crouch
+        if (_input.crouched == _prevCrouched) { }
+
+        if (_input.crouched) {
+            targetSpeed = MoveSpeed * 0.65f;
+        }
         // a simplistic acceleration and deceleration designed to be easy to remove, replace, or iterate upon
 
         // note: Vector2's == operator uses approximation so is not floating point error prone, and is cheaper than magnitude
@@ -167,7 +228,6 @@ public class FirstPersonController : MonoBehaviour
 
         // a reference to the players current horizontal velocity
         float currentHorizontalSpeed = new Vector3(_controller.velocity.x, 0.0f, _controller.velocity.z).magnitude;
-
         float speedOffset = 0.1f;
         float inputMagnitude = _input.analogMovement ? _input.move.magnitude : 1f;
 
@@ -192,6 +252,21 @@ public class FirstPersonController : MonoBehaviour
         if (_input.move != Vector2.zero) {
             // move
             inputDirection = transform.right * _input.move.x + transform.forward * _input.move.y;
+
+            // Responsible for restoring the height
+            // TODO: This code doesn't belong here. It should be its separate method.
+            if (_isChangingHeight) {
+                _controller.height += Time.deltaTime * HeightChangeSpeed;
+                if (_controller.height >= _originalHeight) {
+                    _isChangingHeight = false;
+                }
+            }
+            else {
+                _controller.height -= Time.deltaTime * HeightChangeSpeed;
+                if (_controller.height <= _originalHeight) {
+                    _isChangingHeight = true;
+                }
+            }
         }
 
         // move the player
@@ -199,44 +274,54 @@ public class FirstPersonController : MonoBehaviour
                          new Vector3(0.0f, _verticalVelocity, 0.0f) * Time.deltaTime);
     }
 
-    private void JumpAndGravity()
+    private void Crouch()
     {
-        if (Grounded) {
-            // reset the fall timeout timer
-            _fallTimeoutDelta = FallTimeout;
-
-            // stop our velocity dropping infinitely when grounded
-            if (_verticalVelocity < 0.0f) {
-                _verticalVelocity = -2f;
-            }
-
-            // Jump
-            if (_input.jump && _jumpTimeoutDelta <= 0.0f) {
-                // the square root of H * -2 * G = how much velocity needed to reach desired height
-                _verticalVelocity = Mathf.Sqrt(JumpHeight * -2f * Gravity);
-            }
-
-            // jump timeout
-            if (_jumpTimeoutDelta >= 0.0f) {
-                _jumpTimeoutDelta -= Time.deltaTime;
+        Debug.Log("Changing Height");
+        if (_input.crouched) {
+            _controller.height -= HeightChangeSpeed * Time.deltaTime;
+            if (_controller.height <= CrouchHeight) {
+                _controller.height = CrouchHeight;
+                _isChangingHeight = false;
             }
         }
         else {
-            // reset the jump timeout timer
-            _jumpTimeoutDelta = JumpTimeout;
-
-            // fall timeout
-            if (_fallTimeoutDelta >= 0.0f) {
-                _fallTimeoutDelta -= Time.deltaTime;
+            _controller.height += HeightChangeSpeed * Time.deltaTime;
+            if (_controller.height >= _originalHeight) {
+                _controller.height = _originalHeight;
+                _isChangingHeight = false;
             }
-
-            // if we are not grounded, do not jump
-            _input.jump = false;
         }
+    }
 
-        // apply gravity over time if under terminal (multiply by delta time twice to linearly speed up over time)
-        if (_verticalVelocity < _terminalVelocity) {
-            _verticalVelocity += Gravity * Time.deltaTime;
+    private void ResetHeight()
+    {
+        if (_controller.height < _originalHeight) {
+            _controller.height += HeightChangeSpeed * Time.deltaTime;
+            if (_controller.height >= _originalHeight) {
+                _controller.height = _originalHeight;
+                _isResettingHeight = false;
+            }
+        }
+    }
+
+    private void CameraRotation()
+    {
+        // if there is an input
+        if (_input.look.sqrMagnitude >= _threshold) {
+            //Don't multiply mouse input by Time.deltaTime
+            float deltaTimeMultiplier = IsCurrentDeviceMouse ? 1.0f : Time.deltaTime;
+
+            _cinemachineTargetPitch += _input.look.y * RotationSpeed * deltaTimeMultiplier;
+            _rotationVelocity = _input.look.x * RotationSpeed * deltaTimeMultiplier;
+
+            // clamp our pitch rotation
+            _cinemachineTargetPitch = ClampAngle(_cinemachineTargetPitch, BottomClamp, TopClamp);
+
+            // Update Cinemachine camera target pitch
+            CinemachineCameraTarget.transform.localRotation = Quaternion.Euler(_cinemachineTargetPitch, 0.0f, 0.0f);
+
+            // rotate the player left and right
+            transform.Rotate(Vector3.up * _rotationVelocity);
         }
     }
 
