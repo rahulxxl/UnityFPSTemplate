@@ -9,7 +9,7 @@ public class PlayerInputController : MonoBehaviour
     public Vector2 look;
     public bool jump;
     public bool sprint;
-    public bool crouched = false;
+    public bool crouched;
 
 
     [Header("Movement Settings")] public bool analogMovement;
@@ -29,6 +29,11 @@ public class PlayerInputController : MonoBehaviour
         if (cursorInputForLook) {
             LookInput(value.Get<Vector2>());
         }
+    }
+
+    public void OnJump(InputValue value)
+    {
+        JumpInput(value.isPressed);
     }
 
     public void OnCrouch(InputValue value)
@@ -58,29 +63,34 @@ public class PlayerInputController : MonoBehaviour
 
 #endregion
 
-
+    /*
     public void ResetCrouch()
     {
         crouched = false;
     }
-
+    */
 
     private void MoveInput(Vector2 newMoveDirection)
     {
         move = newMoveDirection;
-        Debug.Log("Moving Character");
+        // Debug.Log("Moving Character");
     }
 
     private void LookInput(Vector2 newLookDirection)
     {
         look = newLookDirection;
-        Debug.Log("Looking Around");
+        // Debug.Log("Looking Around");
+    }
+
+    public void JumpInput(bool newJumpState)
+    {
+        jump = newJumpState;
+        // Debug.Log("Jumping Character");
     }
 
     private void CrouchInput(bool newCrouchState)
     {
         crouched = !crouched;
-        Debug.Log("Crouch State: " + crouched);
     }
 
     private void InteractInput(bool newInteractState)
@@ -101,7 +111,7 @@ public class PlayerInputController : MonoBehaviour
     private void SprintInput(bool newSprintState)
     {
         sprint = newSprintState;
-        Debug.Log("Sprinting");
+        // Debug.Log("Sprinting");
     }
 
 

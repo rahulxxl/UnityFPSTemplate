@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
-using StarterAssets;
+using UnityEngine.Serialization;
+using UnityEngine.Splines.Interpolators;
 
 namespace DureStudios
 {
@@ -8,7 +9,7 @@ namespace DureStudios
 [RequireComponent(typeof(PlayerInput))]
 public class FPSController : MonoBehaviour
 {
-   [Header("Player")] [Tooltip("Move speed of the character in m/s")]
+    [Header("Player")] [Tooltip("Move speed of the character in m/s")]
     public float MoveSpeed = 4.0f;
 
     [Tooltip("Sprint speed of the character in m/s")]
@@ -36,13 +37,21 @@ public class FPSController : MonoBehaviour
     [Tooltip("If the character is grounded or not. Not part of the CharacterController built in grounded check")]
     public bool Grounded = true;
 
-    [Tooltip("Useful for rough ground")] public float GroundedOffset = -0.14f;
+    [Tooltip("What layers the character uses as ground")]
+    public LayerMask GroundLayers;
 
     [Tooltip("The radius of the grounded check. Should match the radius of the CharacterController")]
     public float GroundedRadius = 0.5f;
-
-    [Tooltip("What layers the character uses as ground")]
-    public LayerMask GroundLayers;
+    [Tooltip("Speed of Offset Change")] public float OffsetChangeSpeed;
+    
+    [Tooltip("Useful for rough ground")]
+    public float GroundedStandOffset = -0.14f;
+    [Tooltip("Grounded Offset when player is crouched")]
+    public float GroundedCrouchOffset = 0.5f;
+    [Header("For Visualization Only. See Tooltip")]
+    [Tooltip("This is just for Visualization Only. It will be set to Grounded Stand Offset when Game Starts")]
+    public float _groundedOffset;
+   
 
     [Header("Cinemachine")]
     [Tooltip("The follow target set in the Cinemachine Virtual Camera that the camera will follow")]
@@ -67,18 +76,29 @@ public class FPSController : MonoBehaviour
     private float _jumpTimeoutDelta;
     private float _fallTimeoutDelta;
 
-
     private PlayerInput _playerInput;
     private CharacterController _controller;
-    private StarterAssetsInputs _input;
+    private PlayerInputController _input;
     private GameObject _mainCamera;
 
     private const float _threshold = 0.01f;
 
+    [Tooltip("Height of the character when crouched in meters")]
+    public float CrouchHeight = 1.2f;
+
+    public float HeightChangeSpeed = 6f;
+
+    // Crouch functionality variables
+    // TODO: Replace this variable for Ground checking instead of GroundedStandOffset
+    
+    private bool _isChangingHeight;
+    private float _originalHeight;
+    private bool _prevCrouched = false;
+    private bool _isResetHeight = false;
+    private bool _isChangingGroundOffset;
+
     private bool IsCurrentDeviceMouse {
-        get {
-            return _playerInput.currentControlScheme == "KeyboardMouse";
-        }
+        get { return _playerInput.currentControlScheme == "KeyboardMouse"; }
     }
 
     private void Awake()
@@ -92,21 +112,23 @@ public class FPSController : MonoBehaviour
     private void Start()
     {
         _controller = GetComponent<CharacterController>();
-        _input = GetComponent<StarterAssetsInputs>();
-#if ENABLE_INPUT_SYSTEM
+        _input = GetComponent<PlayerInputController>();
         _playerInput = GetComponent<PlayerInput>();
-#else
-			Debug.LogError( "Starter Assets package is missing dependencies. Please use Tools/Starter Assets/Reinstall Dependencies to fix it");
-#endif
 
         // reset our timeouts on start
         _jumpTimeoutDelta = JumpTimeout;
         _fallTimeoutDelta = FallTimeout;
+
+        _originalHeight = _controller.height;
+        _groundedOffset = GroundedStandOffset;
+
+        Debug.Log("GroundedStandOffset :: " + GroundedStandOffset);
+        Debug.Log("GroundedCrouchOffset :: " + GroundedCrouchOffset);
     }
 
     private void Update()
     {
-        JumpAndGravity();
+        JumpCrouchAndGravity();
         GroundedCheck();
         Move();
     }
@@ -116,33 +138,73 @@ public class FPSController : MonoBehaviour
         CameraRotation();
     }
 
+    private void JumpCrouchAndGravity()
+    {
+        if (Grounded) {
+            // Debug.Log("Grounded");
+            // Does the Crouch state Changed
+            Debug.Log("Prev_Crouch :: " + _prevCrouched + "Input_Crouch :: " + _input.crouched);
+            if (_input.crouched != _prevCrouched) {
+                // Change the height
+                // Debug.Log("Prev_crouch :: " + _prevCrouched);
+                _isChangingHeight = true;
+                _isChangingGroundOffset = true;
+                _prevCrouched = _input.crouched;
+            }
+
+            if (_isChangingHeight)
+                Crouch();
+        }
+        else {
+            Debug.Log("Not Grounded");
+        }
+
+
+        if (Grounded) {
+            // reset the fall timeout timer
+            _fallTimeoutDelta = FallTimeout;
+
+            // stop our velocity dropping infinitely when grounded
+            if (_verticalVelocity < 0.0f) {
+                _verticalVelocity = -2f;
+            }
+
+            // Jump
+            if (_input.jump && _jumpTimeoutDelta <= 0.0f) {
+                // the square root of H * -2 * G = how much velocity needed to reach desired height
+                _verticalVelocity = Mathf.Sqrt(JumpHeight * -2f * Gravity);
+            }
+
+            // jump timeout
+            if (_jumpTimeoutDelta >= 0.0f) {
+                _jumpTimeoutDelta -= Time.deltaTime;
+            }
+        }
+        else {
+            // reset the jump timeout timer
+            _jumpTimeoutDelta = JumpTimeout;
+
+            // fall timeout
+            if (_fallTimeoutDelta >= 0.0f) {
+                _fallTimeoutDelta -= Time.deltaTime;
+            }
+
+            // if we are not grounded, do not jump
+            _input.jump = false;
+        }
+
+        // apply gravity over time if under terminal (multiply by delta time twice to linearly speed up over time)
+        if (_verticalVelocity < _terminalVelocity) {
+            _verticalVelocity += Gravity * Time.deltaTime;
+        }
+    }
+
     private void GroundedCheck()
     {
         // set sphere position, with offset
         Vector3 spherePosition =
-            new Vector3(transform.position.x, transform.position.y - GroundedOffset, transform.position.z);
+            new Vector3(transform.position.x, transform.position.y - _groundedOffset, transform.position.z);
         Grounded = Physics.CheckSphere(spherePosition, GroundedRadius, GroundLayers, QueryTriggerInteraction.Ignore);
-    }
-
-    private void CameraRotation()
-    {
-        // if there is an input
-        if (_input.look.sqrMagnitude >= _threshold) {
-            //Don't multiply mouse input by Time.deltaTime
-            float deltaTimeMultiplier = IsCurrentDeviceMouse ? 1.0f : Time.deltaTime;
-
-            _cinemachineTargetPitch += _input.look.y * RotationSpeed * deltaTimeMultiplier;
-            _rotationVelocity = _input.look.x * RotationSpeed * deltaTimeMultiplier;
-
-            // clamp our pitch rotation
-            _cinemachineTargetPitch = ClampAngle(_cinemachineTargetPitch, BottomClamp, TopClamp);
-
-            // Update Cinemachine camera target pitch
-            CinemachineCameraTarget.transform.localRotation = Quaternion.Euler(_cinemachineTargetPitch, 0.0f, 0.0f);
-
-            // rotate the player left and right
-            transform.Rotate(Vector3.up * _rotationVelocity);
-        }
     }
 
     private void Move()
@@ -190,46 +252,73 @@ public class FPSController : MonoBehaviour
                          new Vector3(0.0f, _verticalVelocity, 0.0f) * Time.deltaTime);
     }
 
-    private void JumpAndGravity()
+    private void Crouch()
     {
-        if (Grounded) {
-            // reset the fall timeout timer
-            _fallTimeoutDelta = FallTimeout;
-
-            // stop our velocity dropping infinitely when grounded
-            if (_verticalVelocity < 0.0f) {
-                _verticalVelocity = -2f;
+        if (_input.crouched) {
+            _controller.height -= HeightChangeSpeed * Time.deltaTime;
+            if (_isChangingGroundOffset) {
+                // _groundedOffset = Mathf.Lerp(_groundedOffset, GroundedCrouchOffset, OffsetChangeSpeed * Time.deltaTime);
+                _groundedOffset -= OffsetChangeSpeed * Time.deltaTime;
             }
-
-            // Jump
-            if (_input.jump && _jumpTimeoutDelta <= 0.0f) {
-                // the square root of H * -2 * G = how much velocity needed to reach desired height
-                _verticalVelocity = Mathf.Sqrt(JumpHeight * -2f * Gravity);
+            if (_groundedOffset <= GroundedCrouchOffset) {
+                _groundedOffset = GroundedCrouchOffset;
+                _isChangingGroundOffset = false;
             }
-
-            // jump timeout
-            if (_jumpTimeoutDelta >= 0.0f) {
-                _jumpTimeoutDelta -= Time.deltaTime;
+            if (_controller.height <= CrouchHeight) {
+                _controller.height = CrouchHeight;
+                _isChangingHeight = false;
             }
         }
         else {
-            // reset the jump timeout timer
-            _jumpTimeoutDelta = JumpTimeout;
-
-            // fall timeout
-            if (_fallTimeoutDelta >= 0.0f) {
-                _fallTimeoutDelta -= Time.deltaTime;
+            _controller.height += HeightChangeSpeed * Time.deltaTime;
+            if (_isChangingGroundOffset) {
+                // _groundedOffset = Mathf.Lerp(_groundedOffset, GroundedStandOffset, OffsetChangeSpeed * Time.deltaTime);
+                _groundedOffset += OffsetChangeSpeed * Time.deltaTime;
             }
-
-            // if we are not grounded, do not jump
-            _input.jump = false;
-        }
-
-        // apply gravity over time if under terminal (multiply by delta time twice to linearly speed up over time)
-        if (_verticalVelocity < _terminalVelocity) {
-            _verticalVelocity += Gravity * Time.deltaTime;
+            if (_groundedOffset >= GroundedStandOffset) {
+                _groundedOffset = GroundedStandOffset;
+                _isChangingGroundOffset = false;
+            }
+            if (_controller.height >= _originalHeight) {
+                _controller.height = _originalHeight;
+                _isChangingHeight = false;
+            }
         }
     }
+
+
+    private void ResetHeight()
+    {
+        if (_controller.height < _originalHeight) {
+            _controller.height += HeightChangeSpeed * Time.deltaTime;
+            if (_controller.height >= _originalHeight) {
+                _controller.height = _originalHeight;
+                _isResetHeight = false;
+            }
+        }
+    }
+
+    private void CameraRotation()
+    {
+        // if there is an input
+        if (_input.look.sqrMagnitude >= _threshold) {
+            //Don't multiply mouse input by Time.deltaTime
+            float deltaTimeMultiplier = IsCurrentDeviceMouse ? 1.0f : Time.deltaTime;
+
+            _cinemachineTargetPitch += _input.look.y * RotationSpeed * deltaTimeMultiplier;
+            _rotationVelocity = _input.look.x * RotationSpeed * deltaTimeMultiplier;
+
+            // clamp our pitch rotation
+            _cinemachineTargetPitch = ClampAngle(_cinemachineTargetPitch, BottomClamp, TopClamp);
+
+            // Update Cinemachine camera target pitch
+            CinemachineCameraTarget.transform.localRotation = Quaternion.Euler(_cinemachineTargetPitch, 0.0f, 0.0f);
+
+            // rotate the player left and right
+            transform.Rotate(Vector3.up * _rotationVelocity);
+        }
+    }
+
 
     private static float ClampAngle(float lfAngle, float lfMin, float lfMax)
     {
@@ -247,7 +336,7 @@ public class FPSController : MonoBehaviour
         else Gizmos.color = transparentRed;
 
         // when selected, draw a gizmo in the position of, and matching radius of, the grounded collider
-        Gizmos.DrawSphere(new Vector3(transform.position.x, transform.position.y - GroundedOffset, transform.position.z),
+        Gizmos.DrawSphere(new Vector3(transform.position.x, transform.position.y - _groundedOffset, transform.position.z),
                           GroundedRadius);
     }
 }
